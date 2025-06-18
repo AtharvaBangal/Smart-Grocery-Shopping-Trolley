@@ -1,0 +1,214 @@
+#include <xc.h>
+#include <string.h>
+#include <stdio.h>
+
+// CONFIGURATION BITS FOR PIC16F877A
+#pragma config FOSC = HS   // High-Speed Oscillator
+#pragma config WDTE = OFF  // Watchdog Timer Disabled
+#pragma config PWRTE = OFF // Power-up Timer Disabled
+#pragma config BOREN = ON  // Brown-out Reset Enabled
+#pragma config LVP = OFF   // Low-Voltage Programming Disabled
+#pragma config CPD = OFF   // Data EEPROM Memory Code Protection Disabled
+#pragma config WRT = OFF   // Flash Program Memory Write Protection Disabled
+#pragma config CP = OFF    // Flash Program Memory Code Protection Disabled
+
+#define _XTAL_FREQ 20000000  // 20MHz Crystal Frequency
+
+// LCD Pins
+#define RS RB0
+#define EN RB1
+#define D4 RB2
+#define D5 RB3
+#define D6 RB4
+#define D7 RB5
+
+// IR Sensors
+#define IR1 RC0  // IR Sensor at Scanner
+#define IR2 RC1  // IR Sensor at Cart
+
+// Function Prototypes
+void LCD_Command(char);
+void LCD_Char(char);
+void LCD_Init();
+void LCD_String(const char *);
+void Read_RFID();
+void UART_Init();
+char UART_Read();
+
+// Global Variables
+char receivedData[13];  // Buffer to store RFID data (12 bytes + null terminator)
+int index = 0;
+float totalAmount = 0.0;
+
+// Product Prices
+float productPrices[] = {150.0, 15.0, 200.0};
+
+// Mapping RFID Tags to Products
+const char *rfidTags[] = {
+    "1B002EB10682",
+    "1B002F0197A2",
+    "1B002EAC59C0"
+};
+const char *products[] = {
+    "Bottle",
+    "Soap",
+    "Face Wash"
+};
+
+// Main Function
+void main() {
+    TRISB = 0x00;
+    TRISC7 = 1;
+    TRISC0 = 1;
+    TRISC1 = 1;
+
+    UART_Init();
+    LCD_Init();
+
+    LCD_String("Smart Shopping");
+    LCD_Command(0xC0);
+    LCD_String("Cart Project");
+    __delay_ms(2000);
+    LCD_Command(0x01);
+    LCD_String("Scan Items");
+
+    while (1) {
+        Read_RFID();
+    }
+}
+
+// RFID Read Function
+void Read_RFID() {
+    index = 0;
+    while (1) {
+        char data = UART_Read();
+        if (data != '\r' && data != '\n' && index < 12) {
+            receivedData[index++] = data;
+        }
+        if (index == 12) {
+            receivedData[index] = '\0';
+            index = 0;
+
+            LCD_Command(0x01);
+            int found = 0;
+            float price = 0.0;
+            for (int j = 0; j < 3; j++) {
+                if (strcmp(receivedData, rfidTags[j]) == 0) {
+                    found = 1;
+                    LCD_String(products[j]);
+                    LCD_Command(0xC0);
+                    LCD_String("Rs.");
+                    price = productPrices[j];
+                    char priceStr[10];
+                    sprintf(priceStr, "%.2f", price);
+                    LCD_String(priceStr);
+                    __delay_ms(2000);
+                    break;
+                }
+            }
+
+            if (!found) {
+                LCD_Command(0x01);
+                LCD_String("Unknown Item");
+                __delay_ms(2000);
+                return;
+            }
+
+            while (1) {
+                if (IR2 == 0) {
+                    totalAmount += price;
+                    LCD_Command(0x01);
+                    LCD_String("Item Added!");
+                    __delay_ms(1000);
+                    LCD_Command(0x01);
+                    LCD_String("Total: Rs.");
+                    char totalStr[10];
+                    sprintf(totalStr, "%.2f", totalAmount);
+                    LCD_String(totalStr);
+                    __delay_ms(1000);
+                    break;
+                } else if (IR1 == 0) {
+                    LCD_Command(0x01);
+                    LCD_String("Item Removed!");
+                    totalAmount -= price;
+                    __delay_ms(1000);
+                    LCD_Command(0x01);
+                    LCD_String("Total: Rs.");
+                    char totalStr[10];
+                    sprintf(totalStr, "%.2f", totalAmount);
+                    LCD_String(totalStr);
+                    __delay_ms(1000);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// UART Initialization
+void UART_Init() {
+    TRISC6 = 0;
+    TRISC7 = 1;
+    SPBRG = 31;
+    TXSTA = 0x20;
+    RCSTA = 0x90;
+}
+
+// UART Read Character
+char UART_Read() {
+    while (!RCIF);
+    return RCREG;
+}
+
+// LCD Functions
+void LCD_Command(char cmd) {
+    RS = 0;
+    D4 = (cmd >> 4) & 1;
+    D5 = (cmd >> 5) & 1;
+    D6 = (cmd >> 6) & 1;
+    D7 = (cmd >> 7) & 1;
+    EN = 1;
+    __delay_ms(2);
+    EN = 0;
+
+    D4 = (cmd >> 0) & 1;
+    D5 = (cmd >> 1) & 1;
+    D6 = (cmd >> 2) & 1;
+    D7 = (cmd >> 3) & 1;
+    EN = 1;
+    __delay_ms(2);
+    EN = 0;
+}
+
+void LCD_Char(char data) {
+    RS = 1;
+    D4 = (data >> 4) & 1;
+    D5 = (data >> 5) & 1;
+    D6 = (data >> 6) & 1;
+    D7 = (data >> 7) & 1;
+    EN = 1;
+    __delay_ms(2);
+    EN = 0;
+
+    D4 = (data >> 0) & 1;
+    D5 = (data >> 1) & 1;
+    D6 = (data >> 2) & 1;
+    D7 = (data >> 3) & 1;
+    EN = 1;
+    __delay_ms(2);
+    EN = 0;
+}
+
+void LCD_Init() {
+    LCD_Command(0x02);
+    LCD_Command(0x28);
+    LCD_Command(0x0C);
+    LCD_Command(0x06);
+    LCD_Command(0x01);
+}
+
+void LCD_String(const char *str) {
+    while (*str) {
+        LCD_Char(*str++);
+    }
+}
